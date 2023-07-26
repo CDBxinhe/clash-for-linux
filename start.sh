@@ -30,10 +30,14 @@ URL=${CLASH_URL:?Error: CLASH_URL variable is not set or empty}
 # 获取 CLASH_SECRET 值，如果不存在则生成一个随机数
 Secret=${CLASH_SECRET:-$(openssl rand -hex 32)}
 
-
+Update_Interval=${UPDATE_INTERVAL?Error: UPDATE_INTERVAL variable is not set or empty}
+Update_Interval=$((Update_Interval + 0))
+Update_Interval=$((Update_Interval * 3600))
+echo $(date "+%Y-%m-%d %H:%M:%S")-Update_Interval=$Update_Interval
+echo $(date "+%Y-%m-%d %H:%M:%S")-URL=$URL
+echo $(date "+%Y-%m-%d %H:%M:%S")-ecret=$Secret
 
 #################### 函数定义 ####################
-
 # 自定义action函数，实现通用action功能
 success() {
 	echo -en "\\033[60G[\\033[1;32m  OK  \\033[0;39m]\r"
@@ -69,6 +73,65 @@ if_success() {
 		exit 1
 	fi
 }
+update_config() {
+	## Clash 订阅地址检测及配置文件下载
+	# 检查url是否有效
+	echo -e $(date "+%Y-%m-%d %H:%M:%S")-'正在检测订阅地址...'
+	Text1="Clash订阅地址可访问！"
+	Text2="Clash订阅地址不可访问！"
+	#curl -o /dev/null -s -m 10 --connect-timeout 10 -w %{http_code} $URL | grep '[23][0-9][0-9]' &>/dev/null
+	curl -o /dev/null -L -k -sS --retry 5 -m 10 --connect-timeout 10 -w "%{http_code}" $URL | grep -E '^[23][0-9]{2}$' &>/dev/null
+	ReturnStatus=$?
+	if_success $Text1 $Text2 $ReturnStatus
+
+	# 拉取更新config.yml文件
+	
+	echo -e $(date "+%Y-%m-%d %H:%M:%S")-'正在下载Clash配置文件...'
+	Text3="配置文件config.yaml下载成功！"
+	Text4="配置文件config.yaml下载失败，退出启动！"
+
+	# 尝试使用curl进行下载
+	curl -L -k -sS --retry 5 -m 10 -o $Temp_Dir/clash.yaml $URL
+	ReturnStatus=$?
+	if [ $ReturnStatus -ne 0 ]; then
+		# 如果使用curl下载失败，尝试使用wget进行下载
+		for i in {1..10}
+		do
+			wget -q --no-check-certificate -O $Temp_Dir/clash.yaml $URL
+			ReturnStatus=$?
+			if [ $ReturnStatus -eq 0 ]; then
+				break
+			else
+				continue
+			fi
+		done
+	fi
+	if_success $Text3 $Text4 $ReturnStatus
+
+	# 重命名clash配置文件
+	\cp -a $Temp_Dir/clash.yaml $Temp_Dir/clash_config.yaml
+
+
+	## 判断订阅内容是否符合clash配置文件标准，尝试转换（当前不支持对 x86_64 以外的CPU架构服务器进行clash配置文件检测和转换，此功能将在后续添加）
+	if [[ $CpuArch =~ "x86_64" || $CpuArch =~ "amd64"  ]]; then
+		echo -e $(date "+%Y-%m-%d %H:%M:%S")-'判断订阅内容是否符合clash配置文件标准:'
+		bash $Server_Dir/scripts/clash_profile_conversion.sh
+		sleep 3
+	fi
+
+
+	## Clash 配置文件重新格式化及配置
+	# 取出代理相关配置 
+	#sed -n '/^proxies:/,$p' $Temp_Dir/clash.yaml > $Temp_Dir/proxy.txt
+	sed -n '/^proxies:/,$p' $Temp_Dir/clash_config.yaml > $Temp_Dir/proxy.txt
+
+	# 合并形成新的config.yaml
+	cat $Temp_Dir/templete_config.yaml > $Temp_Dir/config.yaml
+	cat $Temp_Dir/proxy.txt >> $Temp_Dir/config.yaml
+	\cp $Temp_Dir/config.yaml $Conf_Dir/
+}
+
+
 
 
 
@@ -80,7 +143,7 @@ source $Server_Dir/scripts/get_cpu_arch.sh
 
 # Check if we obtained CPU architecture
 if [[ -z "$CpuArch" ]]; then
-	echo "Failed to obtain CPU architecture"
+	echo $(date "+%Y-%m-%d %H:%M:%S")-"Failed to obtain CPU architecture"
 	exit 1
 fi
 
@@ -93,61 +156,7 @@ unset HTTP_PROXY
 unset HTTPS_PROXY
 unset NO_PROXY
 
-
-## Clash 订阅地址检测及配置文件下载
-# 检查url是否有效
-echo -e '\n正在检测订阅地址...'
-Text1="Clash订阅地址可访问！"
-Text2="Clash订阅地址不可访问！"
-#curl -o /dev/null -s -m 10 --connect-timeout 10 -w %{http_code} $URL | grep '[23][0-9][0-9]' &>/dev/null
-curl -o /dev/null -L -k -sS --retry 5 -m 10 --connect-timeout 10 -w "%{http_code}" $URL | grep -E '^[23][0-9]{2}$' &>/dev/null
-ReturnStatus=$?
-if_success $Text1 $Text2 $ReturnStatus
-
-# 拉取更新config.yml文件
-echo -e '\n正在下载Clash配置文件...'
-Text3="配置文件config.yaml下载成功！"
-Text4="配置文件config.yaml下载失败，退出启动！"
-
-# 尝试使用curl进行下载
-curl -L -k -sS --retry 5 -m 10 -o $Temp_Dir/clash.yaml $URL
-ReturnStatus=$?
-if [ $ReturnStatus -ne 0 ]; then
-	# 如果使用curl下载失败，尝试使用wget进行下载
-	for i in {1..10}
-	do
-		wget -q --no-check-certificate -O $Temp_Dir/clash.yaml $URL
-		ReturnStatus=$?
-		if [ $ReturnStatus -eq 0 ]; then
-			break
-		else
-			continue
-		fi
-	done
-fi
-if_success $Text3 $Text4 $ReturnStatus
-
-# 重命名clash配置文件
-\cp -a $Temp_Dir/clash.yaml $Temp_Dir/clash_config.yaml
-
-
-## 判断订阅内容是否符合clash配置文件标准，尝试转换（当前不支持对 x86_64 以外的CPU架构服务器进行clash配置文件检测和转换，此功能将在后续添加）
-if [[ $CpuArch =~ "x86_64" || $CpuArch =~ "amd64"  ]]; then
-	echo -e '\n判断订阅内容是否符合clash配置文件标准:'
-	bash $Server_Dir/scripts/clash_profile_conversion.sh
-	sleep 3
-fi
-
-
-## Clash 配置文件重新格式化及配置
-# 取出代理相关配置 
-#sed -n '/^proxies:/,$p' $Temp_Dir/clash.yaml > $Temp_Dir/proxy.txt
-sed -n '/^proxies:/,$p' $Temp_Dir/clash_config.yaml > $Temp_Dir/proxy.txt
-
-# 合并形成新的config.yaml
-cat $Temp_Dir/templete_config.yaml > $Temp_Dir/config.yaml
-cat $Temp_Dir/proxy.txt >> $Temp_Dir/config.yaml
-\cp $Temp_Dir/config.yaml $Conf_Dir/
+update_config
 
 # Configure Clash Dashboard
 Work_Dir=$(cd $(dirname $0); pwd)
@@ -157,7 +166,7 @@ sed -r -i '/^secret: /s@(secret: ).*@\1'${Secret}'@g' $Conf_Dir/config.yaml
 
 
 ## 启动Clash服务
-echo -e '\n正在启动Clash服务...'
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-'正在启动Clash服务...'
 Text5="服务启动成功！"
 Text6="服务启动失败！"
 if [[ $CpuArch =~ "x86_64" || $CpuArch =~ "amd64"  ]]; then
@@ -179,8 +188,8 @@ fi
 
 # Output Dashboard access address and Secret
 echo ''
-echo -e "Clash Dashboard 访问地址: http://<ip>:9090/ui"
-echo -e "Secret: ${Secret}"
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-"Clash Dashboard 访问地址: http://<ip>:9090/ui"
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-"Secret: ${Secret}"
 echo ''
 
 # 添加环境变量(root权限)
@@ -193,7 +202,7 @@ function proxy_on() {
     	export HTTP_PROXY=http://127.0.0.1:7890
     	export HTTPS_PROXY=http://127.0.0.1:7890
  	export NO_PROXY=127.0.0.1,localhost
-	echo -e "\033[32m[√] 已开启代理\033[0m"
+	echo -e $(date "+%Y-%m-%d %H:%M:%S")-"\033[32m[√] 已开启代理\033[0m"
 }
 
 # 关闭系统代理
@@ -204,10 +213,16 @@ function proxy_off(){
   	unset HTTP_PROXY
 	unset HTTPS_PROXY
 	unset NO_PROXY
-	echo -e "\033[31m[×] 已关闭代理\033[0m"
+	echo -e $(date "+%Y-%m-%d %H:%M:%S")-"\033[31m[×] 已关闭代理\033[0m"
 }
 EOF
 
-echo -e "请执行以下命令加载环境变量: source /etc/profile.d/clash.sh\n"
-echo -e "请执行以下命令开启系统代理: proxy_on\n"
-echo -e "若要临时关闭系统代理，请执行: proxy_off\n"
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-"请执行以下命令加载环境变量: source /etc/profile.d/clash.sh\n"
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-"请执行以下命令开启系统代理: proxy_on\n"
+echo -e $(date "+%Y-%m-%d %H:%M:%S")-"若要临时关闭系统代理，请执行: proxy_off\n"
+
+while true; do
+    echo $(date "+%Y-%m-%d %H:%M:%S")-"Starting Update Config."
+	sleep $Update_Interval  # 设置的间隔
+    update_config
+done
