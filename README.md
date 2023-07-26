@@ -6,6 +6,8 @@
 
 主要是为了解决我们在服务器上下载GitHub等一些国外资源速度慢的问题。
 
+这个修改版本新增了Update_Interval即更新周期，实现了定期更新配置文件的功能
+
 <br>
 
 # 使用须知
@@ -40,7 +42,9 @@ $ cd clash-for-linux
 $ vim .env
 ```
 
-> **注意：** `.env` 文件中的变量 `CLASH_SECRET` 为自定义 Clash Secret，值为空时，脚本将自动生成随机字符串。
+> **注意1：** `.env` 文件中的变量 `CLASH_SECRET` 为自定义 Clash Secret，值为空时，脚本将自动生成随机字符串。
+>
+> **注意2：**`.env` 文件为新增的Update_Interval自动更新周期，默认为1小时
 
 <br>
 
